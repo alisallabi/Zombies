@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Zombie Horror Game</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; font-family: Arial, sans-serif; }
+    canvas { display: block; background: url('https://i.ibb.co/pP3XGLS/dark-forest.jpg') no-repeat center center/cover; }
+    #ui {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-size: 18px;
+      z-index: 10;
+    }
+    #gameOver {
+      display: none;
+      position: absolute;
+      top: 40%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.8);
+      padding: 30px;
+      border-radius: 10px;
+      text-align: center;
+      color: white;
+      font-size: 32px;
+      z-index: 20;
+    }
+    button {
+      font-size: 18px;
+      padding: 10px 20px;
+      background: #222;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    button:hover { background: #555; }
+    #minimap {
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      width: 150px;
+      height: 150px;
+      border: 2px solid #fff;
+      background: rgba(0,0,0,0.3);
+      z-index: 11;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="ui">
+    Score: <span id="score">0</span><br>
+    High Score: <span id="highScore">0</span><br>
+    Weapon Level: <span id="weaponLevel">1</span>
+  </div>
+  <div id="gameOver">
+    💀 Game Over 💀<br>
+    Final Score: <span id="finalScore">0</span><br>
+    <button onclick="restart()">Play Again</button>
+  </div>
+  <canvas id="minimap"></canvas>
+
+  <audio id="shootSound" src="shoot.mp3"></audio>
+  <audio id="zombieDeathSound" src="zombie-death.mp3"></audio>
+  <audio id="gameOverSound" src="game-over.mp3"></audio>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const minimap = document.getElementById("minimap");
+    const miniCtx = minimap.getContext("2d");
+    minimap.width = 150;
+    minimap.height = 150;
+
+    const uiScore = document.getElementById("score");
+    const finalScoreText = document.getElementById("finalScore");
+    const highScoreText = document.getElementById("highScore");
+    const weaponLevelText = document.getElementById("weaponLevel");
+
+    let score = 0;
+    let highScore = localStorage.getItem("highScore") || 0;
+    highScoreText.textContent = highScore;
+
+    const shootSound = document.getElementById("shootSound");
+    const zombieDeathSound = document.getElementById("zombieDeathSound");
+    const gameOverSound = document.getElementById("gameOverSound");
+
+    const player = {
+      x: canvas.width / 2,
+      y: canvas.height / 2,
+      size: 25,
+      color: "lime",
+      speed: 6,
+      weaponLevel: 1,
+      weaponCooldown: 0
+    };
+
+    const zombies = [];
+    const bullets = [];
+
+    // حركة اللاعب مع WASD
+    const keys = {};
+    window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+    window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+
+    function drawPlayer() {
+      ctx.fillStyle = player.color;
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawZombie(z) {
+      ctx.fillStyle = "red";
+      ctx.beginPath();
+      ctx.arc(z.x, z.y, z.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawBullets() {
+      bullets.forEach((b, i) => {
+        b.x += b.dx;
+        b.y += b.dy;
+        ctx.fillStyle = "yellow";
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+        ctx.fill();
+
+        // إزالة الرصاصة خارج الشاشة
+        if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
+          bullets.splice(i, 1);
+          return;
+        }
+
+        // تحقق من التصادم مع الزومبي
+        zombies.forEach((z, zi) => {
+          const dist = Math.hypot(b.x - z.x, b.y - z.y);
+          if (dist < b.size + z.size) {
+            zombies.splice(zi, 1);
+            bullets.splice(i, 1);
+            score++;
+            uiScore.textContent = score;
+            if (score > highScore) {
+              highScore = score;
+              localStorage.setItem("highScore", highScore);
+              highScoreText.textContent = highScore;
+            }
+            zombieDeathSound.play();
+          }
+        });
+      });
+    }
+
+    function moveZombies() {
+      zombies.forEach(z => {
+        const dx = player.x - z.x;
+        const dy = player.y - z.y;
+        const dist = Math.hypot(dx, dy);
+        z.x += (dx / dist) * z.speed;
+        z.y += (dy / dist) * z.speed;
+
+        if (dist < player.size + z.size) {
+          gameOver();
+        }
+      });
+    }
+
+    function spawnZombie() {
+      const size = 20 + Math.random() * 10;
+      const edge = Math.floor(Math.random() * 4);
+      let x, y;
+      if (edge === 0) { x = 0; y = Math.random() * canvas.height; }
+      else if (edge === 1) { x = canvas.width; y = Math.random() * canvas.height; }
+      else if (edge === 2) { x = Math.random() * canvas.width; y = 0; }
+      else { x = Math.random() * canvas.width; y = canvas.height; }
+      zombies.push({ x, y, size, speed: 0.5 + Math.random() * 1.5 });
+    }
+
+    function update() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // حركة اللاعب
+      if (keys["w"] && player.y - player.size > 0) player.y -= player.speed;
+      if (keys["s"] && player.y + player.size < canvas.height) player.y += player.speed;
+      if (keys["a"] && player.x - player.size > 0) player.x -= player.speed;
+      if (keys["d"] && player.x + player.size < canvas.width) player.x += player.speed;
+
+      drawPlayer();
+      zombies.forEach(drawZombie);
+      moveZombies();
+      drawBullets();
+      drawMiniMap();
+
+      if (!gameEnded) requestAnimationFrame(update);
+    }
+
+    // اطلاق النار على حسب سلاح اللاعب
+    window.addEventListener("click", e => {
+      if (player.weaponCooldown > 0) return;
+      player.weaponCooldown = 15 - player.weaponLevel * 2;
+      if(player.weaponCooldown < 5) player.weaponCooldown = 5;
+      shootSound.currentTime = 0;
+      shootSound.play();
+
+      const angle = Math.atan2(e.clientY - player.y, e.clientX - player.x);
+      const bulletSpeed = 10 + player.weaponLevel * 2;
+      const bulletSize = 6 + player.weaponLevel;
+      bullets.push({
+        x: player.x,
+        y: player.y,
+        dx: Math.cos(angle) * bulletSpeed,
+        dy: Math.sin(angle) * bulletSpeed,
+        size: bulletSize
+      });
+      // يمكن اضافة إطلاق رصاصات إضافية بمستويات سلاح أعلى (ميزة مستقبلية)
+    });
+
+    // تقليل وقت تبريد السلاح
+    setInterval(() => {
+      if (player.weaponCooldown > 0) player.weaponCooldown--;
+    }, 50);
+
+    // رسم الخريطة المصغرة
+    function drawMiniMap() {
+      miniCtx.clearRect(0, 0, minimap.width, minimap.height);
+      miniCtx.fillStyle = "lime";
+      const px = (player.x / canvas.width) * minimap.width;
+      const py = (player.y / canvas.height) * minimap.height;
+      miniCtx.beginPath();
+      miniCtx.arc(px, py, 5, 0, Math.PI * 2);
+      miniCtx.fill();
+
+      miniCtx.fillStyle = "red";
+      zombies.forEach(z => {
+        const zx = (z.x / canvas.width) * minimap.width;
+        const zy = (z.y / canvas.height) * minimap.height;
+        miniCtx.beginPath();
+        miniCtx.arc(zx, zy, 3, 0, Math.PI * 2);
+        miniCtx.fill();
+      });
+    }
+
+    let zombieInterval;
+    let gameEnded = false;
+
+    function gameOver() {
+      if (gameEnded) return;
+      gameEnded = true;
+      clearInterval(zombieInterval);
+      gameOverSound.play();
+      document.getElementById("gameOver").style.display = "block";
+      finalScoreText.textContent = score;
+    }
+
+    function restart() {
+      player.x = canvas.width / 2;
+      player.y = canvas.height / 2;
+      score = 0;
+      player.weaponLevel = 1;
+      player.speed = 6;
+      uiScore.textContent = score;
+      weaponLevelText.textContent = player.weaponLevel;
+      zombies.length = 0;
+      bullets.length = 0;
+      document.getElementById("gameOver").style.display = "none";
+      gameEnded = false;
+      clearInterval(zombieInterval);
+      zombieInterval = setInterval(spawnZombie, 1500);
+      update();
+    }
+
+    // زيادة صعوبة اللعبة كل 20 ثانية بزيادة سرعة الزومبي وكثرتهم
+    setInterval(() => {
+      zombies.forEach(z => {
+        z.speed += 0.05;
+      });
+      if (zombieInterval) {
+        clearInterval(zombieInterval);
+        zombieInterval = setInterval(spawnZombie, 1200);
+      }
+    }, 20000);
+
+    // بدء اللعبة
+    restart();
+  </script>
+</body>
+</html>
